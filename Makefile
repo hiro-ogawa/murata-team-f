@@ -1,3 +1,4 @@
+PY=python3.11
 include Makefile.venv
 Makefile.venv:
 	curl \
@@ -10,3 +11,6 @@ Makefile.venv:
 run: venv
 # 	$(VENV)/python realtime_controller.py --play
 	$(VENV)/python realtime_controller.py --gui
+
+list: venv
+	$(VENV)/python realtime_controller.py --list

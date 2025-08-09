@@ -5,6 +5,8 @@ import sounddevice as sd
 import numpy as np
 from threading import Lock
 
+# DEFAULT_DEVICE_NAME = "Miraisens Haptics Device: USB Audio (hw:1,0)"
+DEFAULT_DEVICE_NAME = None
 
 def list_sound_devices(as_json: bool = False) -> int:
     """List available audio devices using sounddevice.
@@ -116,11 +118,14 @@ def _find_output_device_index_by_name(name_substring: str) -> Optional[int]:
 
 
 def play_dual_tone(
-    left_freq: float = 440.0,
-    right_freq: float = 441.0,
+    left1_freq: float = 440.0,
+    right1_freq: float = 441.0,
+    left2_freq: float = 442.0,
+    right2_freq: float = 443.0,
     samplerate: int = 44100,
-    amplitude: float = 0.2,
-    device_name: Optional[str] = "MacBook Pro Speakers",
+    amplitude1: float = 0.2,
+    amplitude2: float = 0.2,
+    device_name: Optional[str] = DEFAULT_DEVICE_NAME,
     duration: float = 0.0,
 ) -> int:
     """左=left_freq, 右=right_freq のサイン波をリアルタイム生成して出力する。
@@ -136,30 +141,35 @@ def play_dual_tone(
             print(f"指定デバイスが見つかりませんでした: '{device_name}'. デフォルト出力を使用します。")
     try:
         # 位相管理（コールバック内で更新）
-        left_phase = 0.0
-        right_phase = 0.0
+        left1_phase = 0.0
+        right1_phase = 0.0
+        left2_phase = 0.0
+        right2_phase = 0.0
         two_pi = 2.0 * np.pi
-        left_inc = two_pi * left_freq / float(samplerate)
-        right_inc = two_pi * right_freq / float(samplerate)
+        left1_inc = two_pi * left1_freq / float(samplerate)
+        right1_inc = two_pi * right1_freq / float(samplerate)
+        left2_inc = two_pi * left2_freq / float(samplerate)
+        right2_inc = two_pi * right2_freq / float(samplerate)
 
         def callback(outdata, frames, time, status):  # type: ignore[no-redef]
-            nonlocal left_phase, right_phase
+            nonlocal left1_phase, right1_phase, left2_phase, right2_phase
             if status:
-                # 低頻度の XRuns などは通知のみ
                 print(status, flush=False)
             t = np.arange(frames, dtype=np.float32)
-            l = np.sin(left_phase + left_inc * t).astype(np.float32, copy=False)
-            r = np.sin(right_phase + right_inc * t).astype(np.float32, copy=False)
-            # 振幅を適用し、ステレオにパック
-            out = amplitude * np.column_stack((l, r)).astype(np.float32, copy=False)
+            l1 = np.sin(left1_phase + left1_inc * t).astype(np.float32, copy=False)
+            r1 = np.sin(right1_phase + right1_inc * t).astype(np.float32, copy=False)
+            l2 = np.sin(left2_phase + left2_inc * t).astype(np.float32, copy=False)
+            r2 = np.sin(right2_phase + right2_inc * t).astype(np.float32, copy=False)
+            out = np.column_stack((amplitude1 * l1, amplitude1 * r1, amplitude2 * l2, amplitude2 * r2)).astype(np.float32, copy=False)
             outdata[:] = out
-            # 位相を進める（オーバーフロー防止にモジュロ）
-            left_phase = (left_phase + left_inc * frames) % two_pi
-            right_phase = (right_phase + right_inc * frames) % two_pi
+            left1_phase = (left1_phase + left1_inc * frames) % two_pi
+            right1_phase = (right1_phase + right1_inc * frames) % two_pi
+            left2_phase = (left2_phase + left2_inc * frames) % two_pi
+            right2_phase = (right2_phase + right2_inc * frames) % two_pi
 
         with sd.OutputStream(
             samplerate=samplerate,
-            channels=2,
+            channels=4,
             dtype="float32",
             device=device_index if device_index is not None else None,
             callback=callback,
@@ -170,7 +180,7 @@ def play_dual_tone(
                 dev_name = dev_info.get("name")
             except Exception:
                 dev_name = str(used_dev)
-            print(f"再生開始: device='{dev_name}'  fs={samplerate}Hz  L={left_freq}Hz  R={right_freq}Hz  amp={amplitude}")
+            print(f"再生開始: device='{dev_name}'  fs={samplerate}Hz  L1={left1_freq}Hz R1={right1_freq}Hz L2={left2_freq}Hz R2={right2_freq}Hz amp1={amplitude1} amp2={amplitude2}")
 
             if duration and duration > 0:
                 sd.sleep(int(duration * 1000))
@@ -188,12 +198,15 @@ def play_dual_tone(
 
 
 def run_gui(
-    left_freq: float = 440.0,
-    right_freq: float = 441.0,
+    left1_freq: float = 440.0,
+    right1_freq: float = 441.0,
+    left2_freq: float = 442.0,
+    right2_freq: float = 443.0,
     samplerate: int = 44100,
-    amplitude: float = 0.2,
+    amplitude1: float = 0.2,
+    amplitude2: float = 0.2,
     frames: int = 1024,
-    device_name: Optional[str] = "MacBook Pro Speakers",
+    device_name: Optional[str] = DEFAULT_DEVICE_NAME,
 ) -> int:
     """FreeSimpleGUIでリサージュ図形を描画する簡易GUI。
 
@@ -214,79 +227,74 @@ def run_gui(
 
     sg.theme("DarkBlue3")
 
-    size_px = 500
-    graph = sg.Graph(
+    size_px = 400
+    graph1 = sg.Graph(
         canvas_size=(size_px, size_px),
         graph_bottom_left=(-1.1, -1.1),
         graph_top_right=(1.1, 1.1),
         background_color="black",
-        key="-GRAPH-",
+        key="-GRAPH1-",
+        enable_events=False,
+    )
+    graph2 = sg.Graph(
+        canvas_size=(size_px, size_px),
+        graph_bottom_left=(-1.1, -1.1),
+        graph_top_right=(1.1, 1.1),
+        background_color="black",
+        key="-GRAPH2-",
         enable_events=False,
     )
 
+    left_controls = [
+        [sg.Text("Lissajous 1 (L1/R1)")],
+        [sg.Text("L1 Hz"), sg.Input(str(left1_freq), size=(8, 1), key="-L1-FREQ-"), sg.Slider(range=(0.1, 880.0), default_value=left1_freq, resolution=0.1, orientation="h", size=(20, 15), enable_events=True, key="-L1-SLIDER-")],
+        [sg.Text("R1 Hz"), sg.Input(str(right1_freq), size=(8, 1), key="-R1-FREQ-"), sg.Slider(range=(0.1, 880.0), default_value=right1_freq, resolution=0.1, orientation="h", size=(20, 15), enable_events=True, key="-R1-SLIDER-")],
+        [sg.Text("Amp1"), sg.Input(f"{amplitude1:.2f}", size=(6, 1), key="-AMP1-"), sg.Slider(range=(0.0, 1.0), default_value=amplitude1, resolution=0.01, orientation="h", size=(20, 15), enable_events=True, key="-AMP1-SLIDER-")],
+        [sg.Text("ϕL1"), sg.Input("0", size=(6, 1), key="-L1-PHASE-"), sg.Slider(range=(-180, 180), default_value=0, resolution=1, orientation="h", size=(20, 15), enable_events=True, key="-L1-PHASE-SLIDER-")],
+        [sg.Text("ϕR1"), sg.Input("0", size=(6, 1), key="-R1-PHASE-"), sg.Slider(range=(-180, 180), default_value=0, resolution=1, orientation="h", size=(20, 15), enable_events=True, key="-R1-PHASE-SLIDER-")],
+        [sg.Button("Apply L1R1", key="-APPLY-L1R1-")],
+        [graph1],
+    ]
+    right_controls = [
+        [sg.Text("Lissajous 2 (L2/R2)")],
+        [sg.Text("L2 Hz"), sg.Input(str(left2_freq), size=(8, 1), key="-L2-FREQ-"), sg.Slider(range=(0.1, 880.0), default_value=left2_freq, resolution=0.1, orientation="h", size=(20, 15), enable_events=True, key="-L2-SLIDER-")],
+        [sg.Text("R2 Hz"), sg.Input(str(right2_freq), size=(8, 1), key="-R2-FREQ-"), sg.Slider(range=(0.1, 880.0), default_value=right2_freq, resolution=0.1, orientation="h", size=(20, 15), enable_events=True, key="-R2-SLIDER-")],
+        [sg.Text("Amp2"), sg.Input(f"{amplitude2:.2f}", size=(6, 1), key="-AMP2-"), sg.Slider(range=(0.0, 1.0), default_value=amplitude2, resolution=0.01, orientation="h", size=(20, 15), enable_events=True, key="-AMP2-SLIDER-")],
+        [sg.Text("ϕL2"), sg.Input("0", size=(6, 1), key="-L2-PHASE-"), sg.Slider(range=(-180, 180), default_value=0, resolution=1, orientation="h", size=(20, 15), enable_events=True, key="-L2-PHASE-SLIDER-")],
+        [sg.Text("ϕR2"), sg.Input("0", size=(6, 1), key="-R2-PHASE-"), sg.Slider(range=(-180, 180), default_value=0, resolution=1, orientation="h", size=(20, 15), enable_events=True, key="-R2-PHASE-SLIDER-")],
+        [sg.Button("Apply L2R2", key="-APPLY-L2R2-")],
+        [graph2],
+    ]
     layout = [
-        [
-            sg.Text("Lissajous (L=440Hz, R=441Hz, fs=44.1kHz)"),
-            sg.Push(),
-            sg.Button("Play", key="-PLAY-", button_color=("white", "#007acc")),
-            sg.Button("Stop", key="-STOP-", disabled=True),
-            sg.Button("Exit"),
-        ],
-        [
-            sg.Text("Left Hz"),
-            sg.Input(str(left_freq), size=(8, 1), key="-L-FREQ-"),
-            sg.Text("Right Hz"),
-            sg.Input(str(right_freq), size=(8, 1), key="-R-FREQ-"),
-            sg.Button("Apply", key="-APPLY-FREQ-"),
-        ],
-        [
-            sg.Text("L"),
-            sg.Slider(range=(0.1, 880.0), default_value=left_freq, resolution=0.1, orientation="h", size=(40, 15), enable_events=True, key="-L-SLIDER-")
-        ],
-        [
-            sg.Text("R"),
-            sg.Slider(range=(0.1, 880.0), default_value=right_freq, resolution=0.1, orientation="h", size=(40, 15), enable_events=True, key="-R-SLIDER-")
-        ],
-        [
-            sg.Text("Amp"),
-            sg.Input(f"{amplitude:.2f}", size=(6, 1), key="-AMP-"),
-            sg.Slider(range=(0.0, 1.0), default_value=amplitude, resolution=0.01, orientation="h", size=(40, 15), enable_events=True, key="-AMP-SLIDER-"),
-        ],
-        [
-            sg.Text("Phase L (deg)"),
-            sg.Input("0", size=(6, 1), key="-L-PHASE-"),
-            sg.Text("Phase R (deg)"),
-            sg.Input("0", size=(6, 1), key="-R-PHASE-"),
-        ],
-        [
-            sg.Text("ϕL"),
-            sg.Slider(range=(-180, 180), default_value=0, resolution=1, orientation="h", size=(40, 15), enable_events=True, key="-L-PHASE-SLIDER-"),
-        ],
-        [
-            sg.Text("ϕR"),
-            sg.Slider(range=(-180, 180), default_value=0, resolution=1, orientation="h", size=(40, 15), enable_events=True, key="-R-PHASE-SLIDER-"),
-        ],
-        [graph],
+        [sg.Button("Play", key="-PLAY-", button_color=("white", "#007acc")), sg.Button("Stop", key="-STOP-", disabled=True), sg.Button("Exit")],
+        [sg.Column(left_controls), sg.Column(right_controls)],
     ]
 
     window = sg.Window("Lissajous Viewer", layout, finalize=True)
 
     # 座標軸（固定描画）
     axis_color = "#333333"
-    graph.draw_line((-1.05, 0.0), (1.05, 0.0), color=axis_color, width=1)
-    graph.draw_line((0.0, -1.05), (0.0, 1.05), color=axis_color, width=1)
-    graph.draw_rectangle((-1.0, -1.0), (1.0, 1.0), line_color=axis_color)
+    graph1.draw_line((-1.05, 0.0), (1.05, 0.0), color=axis_color, width=1)
+    graph1.draw_line((0.0, -1.05), (0.0, 1.05), color=axis_color, width=1)
+    graph1.draw_rectangle((-1.0, -1.0), (1.0, 1.0), line_color=axis_color)
+    graph2.draw_line((-1.05, 0.0), (1.05, 0.0), color=axis_color, width=1)
+    graph2.draw_line((0.0, -1.05), (0.0, 1.05), color=axis_color, width=1)
+    graph2.draw_rectangle((-1.0, -1.0), (1.0, 1.0), line_color=axis_color)
 
-    # 位相とインクリメント
+    # 2セット分のパラメータ
     two_pi = 2.0 * np.pi
-    left_phase = 0.0
-    right_phase = 0.0
-    left_inc = two_pi * left_freq / float(samplerate)
-    right_inc = two_pi * right_freq / float(samplerate)
-
-    # 位相オフセット（ラジアン、ユーザー操作で変更）
-    left_offset = 0.0
-    right_offset = 0.0
+    left1_phase = 0.0
+    right1_phase = 0.0
+    left2_phase = 0.0
+    right2_phase = 0.0
+    left1_inc = two_pi * left1_freq / float(samplerate)
+    right1_inc = two_pi * right1_freq / float(samplerate)
+    left2_inc = two_pi * left2_freq / float(samplerate)
+    right2_inc = two_pi * right2_freq / float(samplerate)
+    left1_offset = 0.0
+    right1_offset = 0.0
+    left2_offset = 0.0
+    right2_offset = 0.0
 
     # コールバックとGUI間で最新バッファを共有
     latest_lr = None  # type: Optional[np.ndarray]
@@ -296,107 +304,110 @@ def run_gui(
     stream: Optional[sd.OutputStream] = None
     playing = False
 
-    def set_freqs(lf_new: Optional[float] = None, rf_new: Optional[float] = None):
-        nonlocal left_freq, right_freq, left_inc, right_inc
+    def set_freqs(l1_new=None, r1_new=None, l2_new=None, r2_new=None):
+        nonlocal left1_freq, right1_freq, left2_freq, right2_freq, left1_inc, right1_inc, left2_inc, right2_inc
         updated = False
         try:
-            if lf_new is not None:
-                lf = float(lf_new)
-                lf = min(880.0, max(0.1, lf))
-                left_freq = lf
+            if l1_new is not None:
+                left1_freq = min(880.0, max(0.1, float(l1_new)))
                 updated = True
-        except Exception:
-            pass
-        try:
-            if rf_new is not None:
-                rf = float(rf_new)
-                rf = min(880.0, max(0.1, rf))
-                right_freq = rf
+            if r1_new is not None:
+                right1_freq = min(880.0, max(0.1, float(r1_new)))
+                updated = True
+            if l2_new is not None:
+                left2_freq = min(880.0, max(0.1, float(l2_new)))
+                updated = True
+            if r2_new is not None:
+                right2_freq = min(880.0, max(0.1, float(r2_new)))
                 updated = True
         except Exception:
             pass
         if updated:
-            left_inc = two_pi * left_freq / float(samplerate)
-            right_inc = two_pi * right_freq / float(samplerate)
-            # ウィジェット同期
-            window["-L-FREQ-"].update(f"{left_freq:.3f}")
-            window["-R-FREQ-"].update(f"{right_freq:.3f}")
-            window["-L-SLIDER-"].update(left_freq)
-            window["-R-SLIDER-"].update(right_freq)
-            print(f"周波数を更新: L={left_freq}Hz, R={right_freq}Hz")
+            left1_inc = two_pi * left1_freq / float(samplerate)
+            right1_inc = two_pi * right1_freq / float(samplerate)
+            left2_inc = two_pi * left2_freq / float(samplerate)
+            right2_inc = two_pi * right2_freq / float(samplerate)
+            window["-L1-FREQ-"].update(f"{left1_freq:.3f}")
+            window["-R1-FREQ-"].update(f"{right1_freq:.3f}")
+            window["-L2-FREQ-"].update(f"{left2_freq:.3f}")
+            window["-R2-FREQ-"].update(f"{right2_freq:.3f}")
+            print(f"周波数を更新: L1={left1_freq}Hz, R1={right1_freq}Hz, L2={left2_freq}Hz, R2={right2_freq}Hz")
 
-    def set_phase(ldeg_new: Optional[float] = None, rdeg_new: Optional[float] = None):
-        nonlocal left_offset, right_offset
+    def set_phase(l1deg=None, r1deg=None, l2deg=None, r2deg=None):
+        nonlocal left1_offset, right1_offset, left2_offset, right2_offset
         updated = False
         try:
-            if ldeg_new is not None:
-                ld = float(ldeg_new)
-                ld = min(180.0, max(-180.0, ld))
-                left_offset = np.deg2rad(ld)
+            if l1deg is not None:
+                left1_offset = np.deg2rad(min(180.0, max(-180.0, float(l1deg))))
                 updated = True
-        except Exception:
-            pass
-        try:
-            if rdeg_new is not None:
-                rd = float(rdeg_new)
-                rd = min(180.0, max(-180.0, rd))
-                right_offset = np.deg2rad(rd)
+            if r1deg is not None:
+                right1_offset = np.deg2rad(min(180.0, max(-180.0, float(r1deg))))
+                updated = True
+            if l2deg is not None:
+                left2_offset = np.deg2rad(min(180.0, max(-180.0, float(l2deg))))
+                updated = True
+            if r2deg is not None:
+                right2_offset = np.deg2rad(min(180.0, max(-180.0, float(r2deg))))
                 updated = True
         except Exception:
             pass
         if updated:
-            # ウィジェット同期（テキストとスライダー）
-            window["-L-PHASE-"].update(f"{np.rad2deg(left_offset):.0f}")
-            window["-R-PHASE-"].update(f"{np.rad2deg(right_offset):.0f}")
-            window["-L-PHASE-SLIDER-"].update(value=float(np.rad2deg(left_offset)))
-            window["-R-PHASE-SLIDER-"].update(value=float(np.rad2deg(right_offset)))
-            print(f"位相を更新: ϕL={np.rad2deg(left_offset):.0f}°, ϕR={np.rad2deg(right_offset):.0f}°")
+            window["-L1-PHASE-"].update(f"{np.rad2deg(left1_offset):.0f}")
+            window["-R1-PHASE-"].update(f"{np.rad2deg(right1_offset):.0f}")
+            window["-L2-PHASE-"].update(f"{np.rad2deg(left2_offset):.0f}")
+            window["-R2-PHASE-"].update(f"{np.rad2deg(right2_offset):.0f}")
+            print(f"位相を更新: ϕL1={np.rad2deg(left1_offset):.0f}°, ϕR1={np.rad2deg(right1_offset):.0f}°, ϕL2={np.rad2deg(left2_offset):.0f}°, ϕR2={np.rad2deg(right2_offset):.0f}°")
 
-    def set_amp(a_new: Optional[float] = None):
-        nonlocal amplitude
+    def set_amp(a1_new=None, a2_new=None):
+        nonlocal amplitude1, amplitude2
         try:
-            if a_new is None:
-                return
-            a = float(a_new)
-            # 0.0〜1.0にクリップ
-            a = min(1.0, max(0.0, a))
-            amplitude = a
-            # ウィジェット同期
-            window["-AMP-"].update(f"{amplitude:.2f}")
-            window["-AMP-SLIDER-"].update(amplitude)
-            print(f"振幅を更新: Amp={amplitude}")
+            if a1_new is not None:
+                amplitude1 = min(1.0, max(0.0, float(a1_new)))
+                window["-AMP1-"].update(f"{amplitude1:.2f}")
+                print(f"振幅1を更新: Amp1={amplitude1}")
+            if a2_new is not None:
+                amplitude2 = min(1.0, max(0.0, float(a2_new)))
+                window["-AMP2-"].update(f"{amplitude2:.2f}")
+                print(f"振幅2を更新: Amp2={amplitude2}")
         except Exception as e:
             print(f"振幅の更新に失敗: {e}")
 
     def apply_freqs():
-        # 既存: 周波数/振幅を適用
         try:
-            lf = float(window["-L-FREQ-"].get())
-            rf = float(window["-R-FREQ-"].get())
-            set_freqs(lf, rf)
+            l1 = float(window["-L1-FREQ-"].get())
+            r1 = float(window["-R1-FREQ-"].get())
+            l2 = float(window["-L2-FREQ-"].get())
+            r2 = float(window["-R2-FREQ-"].get())
+            set_freqs(l1, r1, l2, r2)
         except Exception as e:
             print(f"周波数の更新に失敗: {e}")
         try:
-            a = float(window["-AMP-"].get())
-            set_amp(a)
+            a1 = float(window["-AMP1-"].get())
+            a2 = float(window["-AMP2-"].get())
+            set_amp(a1, a2)
         except Exception as e:
             print(f"振幅の更新に失敗: {e}")
-        # 新規: 位相適用
         try:
-            ldeg = float(window["-L-PHASE-"].get())
-            rdeg = float(window["-R-PHASE-"].get())
-            set_phase(ldeg, rdeg)
+            l1deg = float(window["-L1-PHASE-"].get())
+            r1deg = float(window["-R1-PHASE-"].get())
+            l2deg = float(window["-L2-PHASE-"].get())
+            r2deg = float(window["-R2-PHASE-"].get())
+            set_phase(l1deg, r1deg, l2deg, r2deg)
         except Exception as e:
             print(f"位相の更新に失敗: {e}")
 
     def generate_lr(n: int) -> np.ndarray:
-        nonlocal left_phase, right_phase
+        nonlocal left1_phase, right1_phase, left2_phase, right2_phase
         t = np.arange(n, dtype=np.float32)
-        l = np.sin(left_phase + left_inc * t + left_offset).astype(np.float32, copy=False)
-        r = np.sin(right_phase + right_inc * t + right_offset).astype(np.float32, copy=False)
-        out = amplitude * np.column_stack((l, r)).astype(np.float32, copy=False)
-        left_phase = (left_phase + left_inc * n) % two_pi
-        right_phase = (right_phase + right_inc * n) % two_pi
+        l1 = np.sin(left1_phase + left1_inc * t + left1_offset).astype(np.float32, copy=False)
+        r1 = np.sin(right1_phase + right1_inc * t + right1_offset).astype(np.float32, copy=False)
+        l2 = np.sin(left2_phase + left2_inc * t + left2_offset).astype(np.float32, copy=False)
+        r2 = np.sin(right2_phase + right2_inc * t + right2_offset).astype(np.float32, copy=False)
+        out = np.column_stack((amplitude1 * l1, amplitude1 * r1, amplitude2 * l2, amplitude2 * r2)).astype(np.float32, copy=False)
+        left1_phase = (left1_phase + left1_inc * n) % two_pi
+        right1_phase = (right1_phase + right1_inc * n) % two_pi
+        left2_phase = (left2_phase + left2_inc * n) % two_pi
+        right2_phase = (right2_phase + right2_inc * n) % two_pi
         return out
 
     def callback(outdata, frames_cb, time, status):  # type: ignore[no-redef]
@@ -415,7 +426,7 @@ def run_gui(
         try:
             stream = sd.OutputStream(
                 samplerate=samplerate,
-                channels=2,
+                channels=4,
                 dtype="float32",
                 device=device_index if device_index is not None else None,
                 blocksize=frames,
@@ -428,7 +439,7 @@ def run_gui(
             except Exception:
                 dev_name = str(stream.device)
             print(
-                f"再生開始(GUI): device='{dev_name}'  fs={samplerate}Hz  L={left_freq}Hz  R={right_freq}Hz  amp={amplitude}"
+                f"再生開始(GUI): device='{dev_name}'  fs={samplerate}Hz  L1={left1_freq}Hz R1={right1_freq}Hz L2={left2_freq}Hz R2={right2_freq}Hz amp1={amplitude1} amp2={amplitude2}"
             )
             playing = True
             window["-PLAY-"].update(disabled=True)
@@ -451,16 +462,23 @@ def run_gui(
         window["-PLAY-"].update(disabled=False)
         window["-STOP-"].update(disabled=True)
 
-    last_figs = []  # 描画した図形ID群（次フレームで削除）
-    target_points = 700  # 描画負荷低減のための間引き目標数
+    last_figs1 = []  # Lissajous1描画ID
+    last_figs2 = []  # Lissajous2描画ID
+    target_points = 700
 
     def clear_curves():
-        for fig in last_figs:
+        for fig in last_figs1:
             try:
-                graph.delete_figure(fig)
+                graph1.delete_figure(fig)
             except Exception:
                 pass
-        last_figs.clear()
+        last_figs1.clear()
+        for fig in last_figs2:
+            try:
+                graph2.delete_figure(fig)
+            except Exception:
+                pass
+        last_figs2.clear()
 
     try:
         while True:
@@ -474,23 +492,61 @@ def run_gui(
                 stop_stream()
                 clear_curves()
                 continue
-            if event == "-APPLY-FREQ-":
-                apply_freqs()
+            if event == "-APPLY-L1R1-":
+                try:
+                    l1 = float(values["-L1-FREQ-"])
+                    r1 = float(values["-R1-FREQ-"])
+                    a1 = float(values["-AMP1-"])
+                    l1deg = float(values["-L1-PHASE-"])
+                    r1deg = float(values["-R1-PHASE-"])
+                    set_freqs(l1_new=l1, r1_new=r1)
+                    set_amp(a1_new=a1)
+                    set_phase(l1deg=l1deg, r1deg=r1deg)
+                except Exception as e:
+                    print(f"L1R1適用エラー: {e}")
                 continue
-            if event == "-L-SLIDER-":
-                set_freqs(lf_new=values.get("-L-SLIDER-"))
+            if event == "-APPLY-L2R2-":
+                try:
+                    l2 = float(values["-L2-FREQ-"])
+                    r2 = float(values["-R2-FREQ-"])
+                    a2 = float(values["-AMP2-"])
+                    l2deg = float(values["-L2-PHASE-"])
+                    r2deg = float(values["-R2-PHASE-"])
+                    set_freqs(l2_new=l2, r2_new=r2)
+                    set_amp(a2_new=a2)
+                    set_phase(l2deg=l2deg, r2deg=r2deg)
+                except Exception as e:
+                    print(f"L2R2適用エラー: {e}")
                 continue
-            if event == "-R-SLIDER-":
-                set_freqs(rf_new=values.get("-R-SLIDER-"))
+            if event == "-L1-SLIDER-":
+                set_freqs(l1_new=values.get("-L1-SLIDER-"))
                 continue
-            if event == "-AMP-SLIDER-":
-                set_amp(values.get("-AMP-SLIDER-"))
+            if event == "-R1-SLIDER-":
+                set_freqs(r1_new=values.get("-R1-SLIDER-"))
                 continue
-            if event == "-L-PHASE-SLIDER-":
-                set_phase(ldeg_new=values.get("-L-PHASE-SLIDER-"))
+            if event == "-AMP1-SLIDER-":
+                set_amp(a1_new=values.get("-AMP1-SLIDER-"))
                 continue
-            if event == "-R-PHASE-SLIDER-":
-                set_phase(rdeg_new=values.get("-R-PHASE-SLIDER-"))
+            if event == "-L1-PHASE-SLIDER-":
+                set_phase(l1deg=values.get("-L1-PHASE-SLIDER-"))
+                continue
+            if event == "-R1-PHASE-SLIDER-":
+                set_phase(r1deg=values.get("-R1-PHASE-SLIDER-"))
+                continue
+            if event == "-L2-SLIDER-":
+                set_freqs(l2_new=values.get("-L2-SLIDER-"))
+                continue
+            if event == "-R2-SLIDER-":
+                set_freqs(r2_new=values.get("-R2-SLIDER-"))
+                continue
+            if event == "-AMP2-SLIDER-":
+                set_amp(a2_new=values.get("-AMP2-SLIDER-"))
+                continue
+            if event == "-L2-PHASE-SLIDER-":
+                set_phase(l2deg=values.get("-L2-PHASE-SLIDER-"))
+                continue
+            if event == "-R2-PHASE-SLIDER-":
+                set_phase(r2deg=values.get("-R2-PHASE-SLIDER-"))
                 continue
 
             # 再生中のみ描画。停止中は描画更新しない。
@@ -506,13 +562,17 @@ def run_gui(
             # 既存曲線をクリア
             clear_curves()
 
-            # 点群作成（間引き）
+            # Lissajous1点群
             step = max(1, (len(data) - 1) // target_points)
-            pts = [(float(data[i, 0]), float(data[i, 1])) for i in range(0, len(data), step)]
-            if len(pts) >= 2:
-                # 折れ線で描画
-                for i in range(len(pts) - 1):
-                    last_figs.append(graph.draw_line(pts[i], pts[i + 1], color="lime", width=1))
+            pts1 = [(float(data[i, 0]), float(data[i, 1])) for i in range(0, len(data), step)]
+            if len(pts1) >= 2:
+                for i in range(len(pts1) - 1):
+                    last_figs1.append(graph1.draw_line(pts1[i], pts1[i + 1], color="lime", width=1))
+            # Lissajous2点群
+            pts2 = [(float(data[i, 2]), float(data[i, 3])) for i in range(0, len(data), step)]
+            if len(pts2) >= 2:
+                for i in range(len(pts2) - 1):
+                    last_figs2.append(graph2.draw_line(pts2[i], pts2[i + 1], color="cyan", width=1))
     except Exception as e:
         print(f"GUI/描画でエラー: {e}")
     finally:
@@ -543,7 +603,7 @@ def main():
         "--device",
         type=str,
         default=None,
-        help="使用する出力デバイス名（部分一致）。未指定時は 'MacBook Pro Speakers' を優先、なければデフォルト",
+        help=f"使用する出力デバイス名（部分一致）。未指定時は '{DEFAULT_DEVICE_NAME}' を優先、なければデフォルト",
     )
     parser.add_argument(
         "--duration",
@@ -559,12 +619,12 @@ def main():
     args = parser.parse_args()
 
     if args.gui:
-        pref_name = args.device if args.device else "MacBook Pro Speakers"
+        pref_name = args.device if args.device else DEFAULT_DEVICE_NAME
         rc = run_gui(device_name=pref_name)
         raise SystemExit(rc)
 
     if args.play:
-        pref_name = args.device if args.device else "MacBook Pro Speakers"
+        pref_name = args.device if args.device else DEFAULT_DEVICE_NAME
         return_code = play_dual_tone(
             left_freq=440.0,
             right_freq=441.0,
