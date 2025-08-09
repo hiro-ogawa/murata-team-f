@@ -118,10 +118,10 @@ def _find_output_device_index_by_name(name_substring: str) -> Optional[int]:
 
 
 def play_dual_tone(
-    left1_freq: float = 440.0,
-    right1_freq: float = 441.0,
-    left2_freq: float = 442.0,
-    right2_freq: float = 443.0,
+    left1_freq: float = 80.0,
+    right1_freq: float = 80.2,
+    left2_freq: float = 81.0,
+    right2_freq: float = 81.2,
     samplerate: int = 44100,
     amplitude1: float = 0.2,
     amplitude2: float = 0.2,
@@ -198,10 +198,10 @@ def play_dual_tone(
 
 
 def run_gui(
-    left1_freq: float = 440.0,
-    right1_freq: float = 441.0,
-    left2_freq: float = 442.0,
-    right2_freq: float = 443.0,
+    left1_freq: float = 80.0,
+    right1_freq: float = 80.2,
+    left2_freq: float = 81.0,
+    right2_freq: float = 81.2,
     samplerate: int = 44100,
     amplitude1: float = 0.2,
     amplitude2: float = 0.2,
@@ -266,7 +266,7 @@ def run_gui(
         [graph2],
     ]
     layout = [
-        [sg.Button("Play", key="-PLAY-", button_color=("white", "#007acc")), sg.Button("Stop", key="-STOP-", disabled=True), sg.Button("Exit")],
+        [sg.Button("Play", key="-PLAY-", button_color=("white", "#007acc")), sg.Button("Stop", key="-STOP-", disabled=True), sg.Button("Reset", key="-RESET-"), sg.Button("Exit")],
         [sg.Column(left_controls), sg.Column(right_controls)],
     ]
 
@@ -283,14 +283,7 @@ def run_gui(
 
     # 2セット分のパラメータ
     two_pi = 2.0 * np.pi
-    left1_phase = 0.0
-    right1_phase = 0.0
-    left2_phase = 0.0
-    right2_phase = 0.0
-    left1_inc = two_pi * left1_freq / float(samplerate)
-    right1_inc = two_pi * right1_freq / float(samplerate)
-    left2_inc = two_pi * left2_freq / float(samplerate)
-    right2_inc = two_pi * right2_freq / float(samplerate)
+    t_base = 0  # サンプル基準時刻
     left1_offset = 0.0
     right1_offset = 0.0
     left2_offset = 0.0
@@ -305,7 +298,7 @@ def run_gui(
     playing = False
 
     def set_freqs(l1_new=None, r1_new=None, l2_new=None, r2_new=None):
-        nonlocal left1_freq, right1_freq, left2_freq, right2_freq, left1_inc, right1_inc, left2_inc, right2_inc
+        nonlocal left1_freq, right1_freq, left2_freq, right2_freq
         updated = False
         try:
             if l1_new is not None:
@@ -397,17 +390,14 @@ def run_gui(
             print(f"位相の更新に失敗: {e}")
 
     def generate_lr(n: int) -> np.ndarray:
-        nonlocal left1_phase, right1_phase, left2_phase, right2_phase
-        t = np.arange(n, dtype=np.float32)
-        l1 = np.sin(left1_phase + left1_inc * t + left1_offset).astype(np.float32, copy=False)
-        r1 = np.sin(right1_phase + right1_inc * t + right1_offset).astype(np.float32, copy=False)
-        l2 = np.sin(left2_phase + left2_inc * t + left2_offset).astype(np.float32, copy=False)
-        r2 = np.sin(right2_phase + right2_inc * t + right2_offset).astype(np.float32, copy=False)
+        nonlocal t_base
+        t = np.arange(t_base, t_base + n, dtype=np.float32)
+        l1 = np.sin(2 * np.pi * left1_freq * t / samplerate + left1_offset).astype(np.float32, copy=False)
+        r1 = np.sin(2 * np.pi * right1_freq * t / samplerate + right1_offset).astype(np.float32, copy=False)
+        l2 = np.sin(2 * np.pi * left2_freq * t / samplerate + left2_offset).astype(np.float32, copy=False)
+        r2 = np.sin(2 * np.pi * right2_freq * t / samplerate + right2_offset).astype(np.float32, copy=False)
         out = np.column_stack((amplitude1 * l1, amplitude1 * r1, amplitude2 * l2, amplitude2 * r2)).astype(np.float32, copy=False)
-        left1_phase = (left1_phase + left1_inc * n) % two_pi
-        right1_phase = (right1_phase + right1_inc * n) % two_pi
-        left2_phase = (left2_phase + left2_inc * n) % two_pi
-        right2_phase = (right2_phase + right2_inc * n) % two_pi
+        t_base += n
         return out
 
     def callback(outdata, frames_cb, time, status):  # type: ignore[no-redef]
@@ -484,6 +474,7 @@ def run_gui(
         while True:
             event, values = window.read(timeout=16)
             if event in (sg.WIN_CLOSED, "Exit"):
+                stop_stream()
                 break
             if event == "-PLAY-":
                 start_stream()
@@ -491,6 +482,11 @@ def run_gui(
             if event == "-STOP-":
                 stop_stream()
                 clear_curves()
+                continue
+            if event == "-RESET-":
+                stop_stream()
+                clear_curves()
+                # 停止状態のままリセット（再生は開始しない）
                 continue
             if event == "-APPLY-L1R1-":
                 try:
@@ -502,6 +498,12 @@ def run_gui(
                     set_freqs(l1_new=l1, r1_new=r1)
                     set_amp(a1_new=a1)
                     set_phase(l1deg=l1deg, r1deg=r1deg)
+                    # スライダーも同期
+                    window["-L1-SLIDER-"].update(l1)
+                    window["-R1-SLIDER-"].update(r1)
+                    window["-AMP1-SLIDER-"].update(a1)
+                    window["-L1-PHASE-SLIDER-"].update(l1deg)
+                    window["-R1-PHASE-SLIDER-"].update(r1deg)
                 except Exception as e:
                     print(f"L1R1適用エラー: {e}")
                 continue
@@ -515,6 +517,12 @@ def run_gui(
                     set_freqs(l2_new=l2, r2_new=r2)
                     set_amp(a2_new=a2)
                     set_phase(l2deg=l2deg, r2deg=r2deg)
+                    # スライダーも同期
+                    window["-L2-SLIDER-"].update(l2)
+                    window["-R2-SLIDER-"].update(r2)
+                    window["-AMP2-SLIDER-"].update(a2)
+                    window["-L2-PHASE-SLIDER-"].update(l2deg)
+                    window["-R2-PHASE-SLIDER-"].update(r2deg)
                 except Exception as e:
                     print(f"L2R2適用エラー: {e}")
                 continue
